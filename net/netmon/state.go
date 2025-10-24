@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/wlynxg/anet"
 	"tailscale.com/envknob"
 	"tailscale.com/feature"
 	"tailscale.com/feature/buildfeatures"
@@ -172,10 +173,14 @@ func (i Interface) Addrs() ([]net.Addr, error) {
 	if i.AltAddrs != nil {
 		return i.AltAddrs, nil
 	}
+	// On Android, fall back to anet which can enumerate interfaces even when
+	// i.Interface is nil (Go's net.Interfaces is broken on some Android builds).
+	if runtime.GOOS == "android" {
+		return anet.InterfaceAddrs()
+	}
 	if i.Interface == nil {
 		return nil, nil
 	}
-
 	return i.Interface.Addrs()
 }
 
@@ -757,6 +762,18 @@ func GetInterfaceList() (InterfaceList, error) {
 func netInterfaces() ([]Interface, error) {
 	if altNetInterfaces != nil {
 		return altNetInterfaces()
+	}
+	// Use the netmon package to get the addresses
+	if runtime.GOOS == "android" {
+		ifs, err := anet.Interfaces()
+		if err != nil {
+			return nil, err
+		}
+		ret := make([]Interface, len(ifs))
+		for i := range ifs {
+			ret[i].Interface = &ifs[i]
+		}
+		return ret, nil
 	}
 	ifs, err := net.Interfaces()
 	if err != nil {
