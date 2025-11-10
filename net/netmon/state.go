@@ -455,6 +455,9 @@ func (s *State) AnyInterfaceUp() bool {
 	if runtime.GOOS == "js" || runtime.GOOS == "tamago" {
 		return true
 	}
+	if envknob.Bool("TS_ASSUME_NETWORK_UP_FOR_TEST") {
+		return true
+	}
 	return s != nil && (s.HaveV4 || s.HaveV6)
 }
 
