@@ -10,6 +10,7 @@ import (
 	"tailscale.com/control/controlknobs"
 	"tailscale.com/health"
 	"tailscale.com/net/tsaddr"
+	"tailscale.com/util/eventbus"
 	"tailscale.com/types/logger"
 	"tailscale.com/util/syspolicy/policyclient"
 )
@@ -19,7 +20,7 @@ type androidManager struct {
 	hijacked bool
 }
 
-func NewOSConfigurator(logf logger.Logf, _ *health.Tracker, _ policyclient.Client, _ *controlknobs.Knobs, _ string) (OSConfigurator, error) {
+func NewOSConfigurator(logf logger.Logf, _ *health.Tracker, _ *eventbus.Bus, _ policyclient.Client, _ *controlknobs.Knobs, _ string) (OSConfigurator, error) {
 	return &androidManager{logf: logf}, nil
 }
 

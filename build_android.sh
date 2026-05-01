@@ -3,14 +3,28 @@
 
 set -euo pipefail
 
-# If $ANDROID_NDK_PATH is not set, use the default path
+# Resolve a clang toolchain that targets Android.
+# Order of preference:
+#   1) $ANDROID_NDK_PATH (caller-provided; e.g. NDK r27c bin dir on x86_64 hosts)
+#   2) Termux's /data/data/com.termux/files/usr/bin (works when this script runs
+#      inside a PRoot Distro on Termux; provides aarch64-linux-android-clang)
+#   3) Auto-download NDK r27c linux-x86_64 (only meaningful on x86_64 hosts)
+HOST_ARCH="$(uname -m)"
 if [ -z "${ANDROID_NDK_PATH:-}" ]; then
-   ANDROID_NDK_PATH="/tmp/android-ndk-r27c-linux/toolchains/llvm/prebuilt/linux-x86_64/bin"
+    if [ -x "/data/data/com.termux/files/usr/bin/aarch64-linux-android-clang" ]; then
+        ANDROID_NDK_PATH="/data/data/com.termux/files/usr/bin"
+    else
+        ANDROID_NDK_PATH="/tmp/android-ndk-r27c-linux/toolchains/llvm/prebuilt/linux-x86_64/bin"
+    fi
 fi
-# Specify the Android NDK path
 if [ ! -d "$ANDROID_NDK_PATH" ]; then
-    echo "Android NDK path not found: $ANDROID_NDK_PATH" # ANDROID_NDK_PATH="/tmp/android-ndk-r27c-linux/toolchains/llvm/prebuilt/linux-x86_64/bin"
-    # exit 1
+    echo "Android NDK path not found: $ANDROID_NDK_PATH"
+    if [ "$HOST_ARCH" != "x86_64" ]; then
+        echo "Host arch is $HOST_ARCH; the official NDK linux-x86_64 zip is unusable here."
+        echo "Set \$ANDROID_NDK_PATH to a clang dir that has aarch64-linux-android*-clang, e.g."
+        echo "  export ANDROID_NDK_PATH=/data/data/com.termux/files/usr/bin"
+        exit 1
+    fi
     curl -# -L https://dl.google.com/android/repository/android-ndk-r27c-linux.zip -o /tmp/android-ndk-r27c-linux.zip
     unzip -q /tmp/android-ndk-r27c-linux.zip -d /tmp
     mv /tmp/android-ndk-r27c /tmp/android-ndk-r27c-linux
@@ -18,6 +32,7 @@ if [ ! -d "$ANDROID_NDK_PATH" ]; then
     export ANDROID_NDK_PATH="/tmp/android-ndk-r27c-linux/toolchains/llvm/prebuilt/linux-x86_64/bin"
     echo "Android NDK path set to: $ANDROID_NDK_PATH"
 fi
+echo "Using Android toolchain at: $ANDROID_NDK_PATH"
 
 
 # export TMPDIR=${TMPDIR:-/tmp}
@@ -80,13 +95,25 @@ fi
 # Set the target architecture and platform
 case "$1" in
     arm)
-        export CC=armv7a-linux-androideabi21-clang
-        export CXX=armv7a-linux-androideabi21-clang++
+        if command -v armv7a-linux-androideabi21-clang >/dev/null 2>&1; then
+            export CC=armv7a-linux-androideabi21-clang
+            export CXX=armv7a-linux-androideabi21-clang++
+        else
+            export CC=armv7a-linux-androideabi-clang
+            export CXX=armv7a-linux-androideabi-clang++
+        fi
         export GOARCH="arm"
         ;;
     arm64)
-        export CC=aarch64-linux-android21-clang
-        export CXX=aarch64-linux-android21-clang++
+        # NDK ships clang as aarch64-linux-android21-clang; Termux ships the
+        # generic aarch64-linux-android-clang. Pick whichever exists.
+        if command -v aarch64-linux-android21-clang >/dev/null 2>&1; then
+            export CC=aarch64-linux-android21-clang
+            export CXX=aarch64-linux-android21-clang++
+        else
+            export CC=aarch64-linux-android-clang
+            export CXX=aarch64-linux-android-clang++
+        fi
         export GOARCH="arm64"
         ;;
     amd64)
@@ -106,13 +133,17 @@ export CGO_ENABLED=1
 ldflags="-X tailscale.com/version.longStamp=${VERSION_LONG} -X tailscale.com/version.shortStamp=${VERSION_SHORT} -X tailscale.com/version.gitCommitStamp=${VERSION_GIT_HASH}"
 ldflags="$ldflags -w -s"
 
-# Feature tags configuration
+# Feature tags configuration.
+# Removed: features that don't apply to Magisk Android use-case.
+# Notably we KEEP taildrop so `tailscale file get/cp` are available — the
+# magisk-tailscaled GUI's Drop daemon and file-share flow depend on these.
 REMOVE=(
     aws
     bird
     tap
     kube
     completion
+    completion_scripts
     wakeonlan
     capture
     systray
@@ -120,7 +151,6 @@ REMOVE=(
     syspolicy
     appconnectors
     identityfederation
-    taildrop
     captiveportal
 )
 
