@@ -1,6 +1,10 @@
 // Copyright (c) Tailscale Inc & contributors
 // SPDX-License-Identifier: BSD-3-Clause
-//go:build !android
+
+// Note: upstream gates this file with `//go:build !android` because the
+// official Tailscale Android app injects its own SAF-backed FileOps via
+// e.fileOps. The Magisk-Tailscaled flavor runs as root and has full
+// filesystem access, so we want fsFileOps registered on Android too.
 
 package taildrop
 
