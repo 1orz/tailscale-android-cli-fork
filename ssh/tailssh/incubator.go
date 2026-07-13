@@ -7,7 +7,7 @@
 // and groups to the specified `--uid`, `--gid` and `--groups`, and
 // then launches the requested `--cmd`.
 
-//go:build (linux && !android) || (darwin && !ios) || freebsd || openbsd
+//go:build (linux && !android) || android || (darwin && !ios) || freebsd || openbsd
 
 package tailssh
 
@@ -48,6 +48,7 @@ import (
 
 const (
 	linux   = "linux"
+	android = "android"
 	darwin  = "darwin"
 	freebsd = "freebsd"
 	openbsd = "openbsd"
@@ -866,6 +867,18 @@ func doDropPrivileges(dlogf logger.Logf, wantUid, wantGid int, supplementaryGrou
 // via an inherited file instead (see forwardedEnvFile).
 func (ss *sshSession) incubatorEnv() []string {
 	env := envForUser(ss.conn.localUser)
+	if runtime.GOOS == android {
+		// On Android there is no login shell to source a profile, so inherit
+		// the tailscaled process environment (PATH, ANDROID_*, etc.) to give
+		// the session a usable shell. TS_* is filtered out to avoid leaking
+		// tailscaled's own configuration into user sessions. This runs before
+		// the acceptEnvPair loop below so client-supplied values still win.
+		for _, kv := range os.Environ() {
+			if !strings.HasPrefix(kv, "TS_") {
+				env = append(env, kv)
+			}
+		}
+	}
 	for _, kv := range ss.Environ() {
 		if acceptEnvPair(kv) {
 			env = append(env, kv)
@@ -900,6 +913,15 @@ func (ss *sshSession) launchProcess() error {
 
 	cmd := ss.cmd
 	cmd.Env = ss.incubatorEnv()
+
+	if runtime.GOOS == android {
+		// Android has no meaningful per-user home directory in /etc/passwd,
+		// so start the session in the tailscaled process's own $HOME rather
+		// than leaving the child in "/", which is not writable.
+		if home, exists := os.LookupEnv("HOME"); exists {
+			cmd.Dir = home
+		}
+	}
 
 	if len(forwardedEnv) > 0 {
 		// The accepted environment may contain secrets, so it is passed to the child via an
@@ -1218,6 +1240,8 @@ func (ia *incubatorArgs) loginArgs(loginCmdPath string) []string {
 			return []string{loginCmdPath, "-f", ia.localUser, "-p"}
 		}
 		return []string{loginCmdPath, "-f", ia.localUser, "-h", ia.remoteIP, "-p"}
+	case android:
+		return []string{loginCmdPath}
 	case freebsd, openbsd:
 		return []string{loginCmdPath, "-fp", "-h", ia.remoteIP, ia.localUser}
 	}
@@ -1245,6 +1269,16 @@ func setGroups(groupIDs []int) error {
 		// some permissions thing isn't working, due to some arbitrary group ordering, but it at least allows
 		// this to work for more things than it previously did.
 		groupIDs = groupIDs[:16]
+	}
+
+	if runtime.GOOS == "android" {
+		if os.Geteuid() == 0 {
+			err := syscall.Setgroups(groupIDs)
+			if err != nil {
+				fmt.Println("Setgroups failed:", err)
+			}
+		}
+		return nil
 	}
 
 	err := syscall.Setgroups(groupIDs)
