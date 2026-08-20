@@ -138,6 +138,16 @@ func (e *Extension) onChangeProfile(profile ipn.LoginProfileView, _ ipn.PrefsVie
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	// Init calls us once with the bootstrap profile/prefs, which on a fresh
+	// tailscaled (no profile selected yet) are zero-value Views. Calling
+	// UserProfile() on an invalid LoginProfileView dereferences a nil pointer,
+	// so treat it the same as a profile with no user.
+	if !profile.Valid() {
+		e.setMgrLocked(nil)
+		e.outgoingFiles = nil
+		return
+	}
+
 	uid := profile.UserProfile().ID()
 	activeLogin := profile.UserProfile().LoginName()
 

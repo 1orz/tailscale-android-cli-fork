@@ -10,27 +10,66 @@ set -euo pipefail
 
 NDK_VERSION="r27c"
 NDK_DIR="/tmp/android-ndk-${NDK_VERSION}-linux"
+TERMUX_BIN="/data/data/com.termux/files/usr/bin"
 
 # --- Functions ---
 
 setup_ndk() {
-    export ANDROID_NDK_PATH="${ANDROID_NDK_PATH:-${NDK_DIR}/toolchains/llvm/prebuilt/linux-x86_64/bin}"
-    if [ -d "$ANDROID_NDK_PATH" ]; then return; fi
+    if [ -z "${ANDROID_NDK_PATH:-}" ]; then
+        if [ -x "${TERMUX_BIN}/aarch64-linux-android-clang" ]; then
+            # Building on-device: Termux ships an Android-targeting clang, which
+            # is the only usable toolchain when the host is not linux-x86_64
+            # (e.g. running under PRoot Distro on the phone itself).
+            ANDROID_NDK_PATH="${TERMUX_BIN}"
+        else
+            ANDROID_NDK_PATH="${NDK_DIR}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+        fi
+    fi
+    export ANDROID_NDK_PATH
+    if [ -d "$ANDROID_NDK_PATH" ]; then
+        echo "Using Android toolchain at: $ANDROID_NDK_PATH"
+        return
+    fi
+    local host_arch
+    host_arch="$(uname -m)"
+    if [ "$host_arch" != "x86_64" ]; then
+        echo "Android NDK path not found: $ANDROID_NDK_PATH"
+        echo "Host arch is ${host_arch}; the official NDK linux-x86_64 zip cannot run here."
+        echo "Set \$ANDROID_NDK_PATH to a clang directory containing ${ANDROID_TRIPLE}-clang, e.g."
+        echo "  export ANDROID_NDK_PATH=${TERMUX_BIN}"
+        exit 1
+    fi
     echo "Downloading NDK ${NDK_VERSION}..."
     curl -# -L "https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip" -o /tmp/android-ndk.zip
     unzip -q /tmp/android-ndk.zip -d /tmp
     mv "/tmp/android-ndk-${NDK_VERSION}" "$NDK_DIR"
     rm /tmp/android-ndk.zip
+    echo "Using Android toolchain at: $ANDROID_NDK_PATH"
 }
 
 set_arch() {
     export GOOS=android
     case "$1" in
-        arm)   export GOARCH=arm CC=armv7a-linux-androideabi21-clang CXX=armv7a-linux-androideabi21-clang++ ;;
-        arm64) export GOARCH=arm64 CC=aarch64-linux-android21-clang CXX=aarch64-linux-android21-clang++ ;;
-        amd64) export GOARCH=amd64 CC=x86_64-linux-android21-clang CXX=x86_64-linux-android21-clang++ ;;
+        arm)   export GOARCH=arm   ANDROID_TRIPLE=armv7a-linux-androideabi ;;
+        arm64) export GOARCH=arm64 ANDROID_TRIPLE=aarch64-linux-android ;;
+        amd64) export GOARCH=amd64 ANDROID_TRIPLE=x86_64-linux-android ;;
         *)     echo "Unknown arch: $1"; exit 1 ;;
     esac
+}
+
+# resolve_cc selects the clang binary for $ANDROID_TRIPLE. The NDK ships
+# API-level-suffixed names (aarch64-linux-android21-clang) while Termux ships
+# the unsuffixed name. Must be called after $ANDROID_NDK_PATH is on $PATH.
+resolve_cc() {
+    if command -v "${ANDROID_TRIPLE}21-clang" >/dev/null 2>&1; then
+        export CC="${ANDROID_TRIPLE}21-clang" CXX="${ANDROID_TRIPLE}21-clang++"
+    elif command -v "${ANDROID_TRIPLE}-clang" >/dev/null 2>&1; then
+        export CC="${ANDROID_TRIPLE}-clang" CXX="${ANDROID_TRIPLE}-clang++"
+    else
+        echo "No clang found for ${ANDROID_TRIPLE} in \$PATH ($ANDROID_NDK_PATH)"
+        exit 1
+    fi
+    echo "Using CC=$CC"
 }
 
 get_build_tags() {
@@ -88,6 +127,7 @@ cmd_build() {
         export CGO_ENABLED=1
         setup_ndk
         export PATH="$ANDROID_NDK_PATH:$PATH"
+        resolve_cc
     else
         export CGO_ENABLED=0
     fi
