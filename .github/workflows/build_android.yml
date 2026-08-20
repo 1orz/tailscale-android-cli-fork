@@ -91,11 +91,25 @@ jobs:
             path: |
               dist/tailscaled.arm64
 
+        # Allows re-running the workflow for an existing tag without having to
+        # delete the release by hand. The tag itself is kept.
+        - name: Delete existing release (if any)
+          continue-on-error: true
+          env:
+            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          run: |
+            gh release delete "${{ github.ref_name }}" \
+              --repo "${{ github.repository }}" \
+              --yes \
+              --cleanup-tag=false || true
+
         - name: Create Release
           uses: softprops/action-gh-release@v3
           with:
             token: "${{ secrets.GITHUB_TOKEN }}"
+            tag_name: ${{ github.ref_name }}
             prerelease: ${{ steps.release_type.outputs.is_prerelease }}
             generate_release_notes: true
+            fail_on_unmatched_files: true
             files: |
               dist/*.tgz
