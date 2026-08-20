@@ -23,7 +23,21 @@ jobs:
           uses: actions/checkout@v4
           with:
             fetch-depth: 0
-          
+
+        # This file is kept on the default branch only so that workflow_dispatch
+        # is offered at all -- GitHub lists dispatchable workflows from the
+        # default branch, then runs the copy found on the ref you select. The
+        # default branch is a plain mirror of upstream tailscale and carries no
+        # Android patch, so bail out early with a usable message rather than
+        # failing later on a missing build script.
+        - name: Ensure this ref carries the Android patch
+          run: |
+            if [ ! -f scripts/android.sh ]; then
+              echo "::error::scripts/android.sh is missing, so this ref has no Android patch."
+              echo "::error::Select an *-android-dev branch when dispatching, or push a v*-android tag."
+              exit 1
+            fi
+
         - name: Set up Go
           uses: actions/setup-go@v5
           with:
@@ -38,33 +52,28 @@ jobs:
           with:
             ndk-version: r27c
             add-to-path: false
-        
-        - name: Build arm
-          run: |
-            export ANDROID_NDK_PATH="${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin"
-            if [[ "${{ steps.release_type.outputs.is_prerelease }}" == "true" ]]; then
-              ./build_android.sh --pre arm
-            else
-              ./build_android.sh arm
-            fi
-        - name: Build arm64
-          run: |
-            export ANDROID_NDK_PATH="${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin"
-            if [[ "${{ steps.release_type.outputs.is_prerelease }}" == "true" ]]; then
-              ./build_android.sh --pre arm64
-            else
-              ./build_android.sh arm64
-            fi
-        
+
         - name: Install UPX
           uses: crazy-max/ghaction-upx@v3
           with:
             install-only: true
 
-        - name: Compress binaries with UPX
+        - name: Build arm
           run: |
-            upx --lzma --best ./dist/tailscaled.arm
-            upx --lzma --best ./dist/tailscaled.arm64
+            export ANDROID_NDK_PATH="${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+            if [[ "${{ steps.release_type.outputs.is_prerelease }}" == "true" ]]; then
+              ./scripts/android.sh build --pre --upx arm
+            else
+              ./scripts/android.sh build --upx arm
+            fi
+        - name: Build arm64
+          run: |
+            export ANDROID_NDK_PATH="${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+            if [[ "${{ steps.release_type.outputs.is_prerelease }}" == "true" ]]; then
+              ./scripts/android.sh build --pre --upx arm64
+            else
+              ./scripts/android.sh build --upx arm64
+            fi
         
         - name: Compress artifacts
           id: compress_artifacts
@@ -96,7 +105,9 @@ jobs:
             path: |
               dist/tailscaled.arm64
 
-        - name: Delete existing release (if any) so we can recreate idempotently
+        # Allows re-running the workflow for an existing tag without having to
+        # delete the release by hand. The tag itself is kept.
+        - name: Delete existing release (if any)
           continue-on-error: true
           env:
             GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -107,11 +118,12 @@ jobs:
               --cleanup-tag=false || true
 
         - name: Create Release
-          uses: softprops/action-gh-release@v2
+          uses: softprops/action-gh-release@v3
           with:
+            token: "${{ secrets.GITHUB_TOKEN }}"
             tag_name: ${{ github.ref_name }}
             prerelease: ${{ steps.release_type.outputs.is_prerelease }}
+            generate_release_notes: true
+            fail_on_unmatched_files: true
             files: |
               dist/*.tgz
-            generate_release_notes: false
-            fail_on_unmatched_files: true
